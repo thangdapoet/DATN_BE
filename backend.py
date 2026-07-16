@@ -5,6 +5,7 @@ import os
 import numpy as np
 import shutil  
 import logging
+import glob
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 from deepface import DeepFace
@@ -180,7 +181,18 @@ def identify_face_ai(captured_img_path, history_id):
                 relative_final_path = f"accepted_access/{file_name}"
                 shutil.move(full_captured_path, final_img_path)
                 status = "SUCCESS"
-                
+                if best_match['distance'] < 0.40: #thay doi anh profile neu anh < 0.4
+                    existing_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{uid_found}_*.jpg"))
+                    existing_imgs.sort(key=os.path.getmtime) 
+                    
+                    while len(existing_imgs) >= 5:
+                        os.remove(existing_imgs.pop(0))
+                        
+                    new_timestamp = int(time.time())
+                    new_face_path = os.path.join(KNOWN_FACES_DIR, f"{uid_found}_{new_timestamp}.jpg")
+                    shutil.copy(final_img_path, new_face_path)
+                    
+                    clear_face_cache()
                 mqtt_client.publish(MQTT_TOPIC_CMD, "FACE_SUCCESS")
                 ws_payload = {"status": "ok", "id": uid_found, "message": f"Mở cửa bằng khuôn mặt ({uid_found})"}
             else:
