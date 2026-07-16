@@ -113,14 +113,14 @@ def verify_face_ai(captured_img_path, uid, history_id):
             
         result = DeepFace.verify(
             img1_path=full_captured_path, img2_path=known_face_path, 
-            model_name="Facenet", detector_backend="mtcnn",
-            distance_metric="euclidean_l2", enforce_detection=True,
+            model_name="ArcFace", detector_backend="mtcnn",
+            distance_metric="cosine", enforce_detection=True,
             anti_spoofing=True 
         )
         
         is_real = result.get("is_real", True)
         
-        if is_real and result.get("distance", 1.0) <= 0.75:
+        if is_real and result.get("distance", 1.0) <= 0.68:
             final_img_path = os.path.join(ACCEPTED_DIR, file_name)
             relative_final_path = f"accepted_access/{file_name}"
             shutil.move(full_captured_path, final_img_path)
