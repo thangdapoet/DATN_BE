@@ -39,7 +39,7 @@ def send_ws_event(event_data: dict):
     if shared_loop and shared_loop.is_running():
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), shared_loop)
 
-RTSP_URL = "rtsp://thangdapoet:camera1511@192.168.1.12:554/stream1"
+RTSP_URL = "rtsp://thangdapoet:camera1511@192.168.1.50:554/stream1"
 latest_jpeg = None
 
 def capture_camera():

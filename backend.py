@@ -114,21 +114,26 @@ def verify_face_ai(captured_img_path, uid, history_id):
         result = DeepFace.verify(
             img1_path=full_captured_path, img2_path=known_face_path, 
             model_name="Facenet", detector_backend="mtcnn",
-            distance_metric="euclidean_l2", enforce_detection=True
+            distance_metric="euclidean_l2", enforce_detection=True,
+            anti_spoofing=True 
         )
         
-        if result.get("distance", 1.0) <= 0.75:
+        is_real = result.get("is_real", True)
+        
+        if is_real and result.get("distance", 1.0) <= 0.75:
             final_img_path = os.path.join(ACCEPTED_DIR, file_name)
             relative_final_path = f"accepted_access/{file_name}"
             shutil.move(full_captured_path, final_img_path)
             status = "SUCCESS"
-            ws_payload = {"status": "ok", "id": uid, "message": f"Xác thực khuôn mặt thành công ({uid})"} 
+            ws_payload = {"status": "ok", "id": uid, "message": f"Xác thực khuôn mặt trùng khớp ({uid})"} 
         else:
             final_img_path = os.path.join(WARNING_DIR, file_name)
             relative_final_path = f"security_warnings/{file_name}"
             shutil.move(full_captured_path, final_img_path)
             status = "FAKE_OR_STRANGER"
-            ws_payload = {"status": "bad", "id": "UNKNOWN", "message": f"Cảnh báo: Khuôn mặt không khớp ({uid})"}
+            
+            msg = f"Cảnh báo: Khuôn mặt không khớp ({uid})" if is_real else f"Phát hiện hình ảnh giả mạo! ({uid})"
+            ws_payload = {"status": "bad", "id": "UNKNOWN", "message": msg}
             
     except ValueError:
         final_img_path = os.path.join(WARNING_DIR, file_name)
@@ -163,6 +168,7 @@ def identify_face_ai(captured_img_path, history_id):
             detector_backend="mtcnn",
             distance_metric="euclidean_l2", 
             enforce_detection=True,
+            anti_spoofing=True, 
             silent=True
         )
         
@@ -190,7 +196,7 @@ def identify_face_ai(captured_img_path, history_id):
         status = "UNKNOWN_FACE"
         
         mqtt_client.publish(MQTT_TOPIC_CMD, "FACE_DENIED")
-        ws_payload = {"status": "bad", "id": "UNKNOWN", "message": "Face ID thất bại"}
+        ws_payload = {"status": "bad", "id": "UNKNOWN", "message": "Mở của bằng khuôn mặt thất bại"}
     finally:
         if history_id: 
             update_history_record(history_id, status, relative_final_path, final_uid=uid_found)
