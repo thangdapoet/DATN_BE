@@ -35,7 +35,7 @@ for folder in [KNOWN_FACES_DIR, ACCEPTED_DIR, WARNING_DIR, TEMP_DIR]:
 access_history = {}
 
 def clear_face_cache():
-    cache_file = os.path.join(KNOWN_FACES_DIR, "representations_facenet.pkl")
+    cache_file = os.path.join(KNOWN_FACES_DIR, "representations_arcface.pkl") # Đổi sang arcface
     if os.path.exists(cache_file):
         os.remove(cache_file)
 
@@ -165,9 +165,9 @@ def identify_face_ai(captured_img_path, history_id):
         dfs = DeepFace.find(
             img_path=full_captured_path, 
             db_path=KNOWN_FACES_DIR, 
-            model_name="Facenet", 
+            model_name="ArcFace", 
             detector_backend="mtcnn",
-            distance_metric="euclidean_l2", 
+            distance_metric="cosine", 
             enforce_detection=True,
             anti_spoofing=True, 
             silent=True
@@ -175,8 +175,8 @@ def identify_face_ai(captured_img_path, history_id):
         
         if len(dfs) > 0 and not dfs[0].empty:
             best_match = dfs[0].iloc[0]
-            if best_match['distance'] <= 0.75:
-                uid_found = os.path.basename(best_match['identity']).replace(".jpg", "")
+            if best_match['distance'] <= 0.65:
+                uid_found = os.path.basename(best_match['identity']).replace(".jpg", "").split('_')[0]
                 final_img_path = os.path.join(ACCEPTED_DIR, file_name)
                 relative_final_path = f"accepted_access/{file_name}"
                 shutil.move(full_captured_path, final_img_path)
