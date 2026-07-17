@@ -121,7 +121,7 @@ def verify_face_ai(captured_img_path, uid, history_id):
         
         is_real = result.get("is_real", True)
         
-        if is_real and result.get("distance", 1.0) <= 0.68:
+        if is_real and result.get("distance", 1.0) <= 0.6:
             final_img_path = os.path.join(ACCEPTED_DIR, file_name)
             relative_final_path = f"accepted_access/{file_name}"
             shutil.move(full_captured_path, final_img_path)
@@ -175,7 +175,7 @@ def identify_face_ai(captured_img_path, history_id):
         
         if len(dfs) > 0 and not dfs[0].empty:
             best_match = dfs[0].iloc[0]
-            if best_match['distance'] <= 0.65:
+            if best_match['distance'] <= 0.6:
                 uid_found = os.path.basename(best_match['identity']).replace(".jpg", "").split('_')[0]
                 final_img_path = os.path.join(ACCEPTED_DIR, file_name)
                 relative_final_path = f"accepted_access/{file_name}"
@@ -208,7 +208,7 @@ def identify_face_ai(captured_img_path, history_id):
         status = "UNKNOWN_FACE"
         
         mqtt_client.publish(MQTT_TOPIC_CMD, "FACE_DENIED")
-        ws_payload = {"status": "bad", "id": "UNKNOWN", "message": "Mở của bằng khuôn mặt thất bại"}
+        ws_payload = {"status": "bad", "id": "UNKNOWN", "message": "Mở cửa bằng khuôn mặt thất bại"}
     finally:
         if history_id: 
             update_history_record(history_id, status, relative_final_path, final_uid=uid_found)
@@ -255,12 +255,24 @@ def on_message(client, userdata, msg):
             verify_face_ai(img_path, data, history_id)
             
     elif event == "ADMIN_DELETED_CARD":
+        # 1. Xóa ảnh gốc (UID.jpg)
         target_img_path = os.path.join(KNOWN_FACES_DIR, f"{data}.jpg")
         if os.path.exists(target_img_path):
             os.remove(target_img_path)
-            clear_face_cache()
-            if send_event_callback: 
-                send_event_callback({"status": "ok", "id": data, "message": f"Đã xóa thẻ {data}"})
+            
+        # 2. Quét và xóa toàn bộ ảnh tự học cập nhật thêm (UID_timestamp.jpg)
+        dynamic_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{data}_*.jpg"))
+        for img_path in dynamic_imgs:
+            try:
+                os.remove(img_path)
+            except Exception as e:
+                logging.error(f"Lỗi khi xóa ảnh tự học {img_path}: {e}")
+
+        # 3. Dọn dẹp bộ nhớ đệm (cache) để DeepFace trích xuất lại đặc trưng cho lần sau
+        clear_face_cache()
+        
+        if send_event_callback: 
+            send_event_callback({"status": "ok", "id": data, "message": f"Đã xóa thẻ và toàn bộ dữ liệu khuôn mặt ({data})"})
 
     elif event in ["CLONED_WARNING", "PASS_LOCKED", "RFID_LOCKED"]:
         img_path = capture_snapshot(event, data, target_dir=WARNING_DIR)
