@@ -94,126 +94,113 @@ def capture_snapshot(event_name, uid_info="", target_dir=TEMP_DIR, is_registrati
     
     return f"{os.path.basename(target_dir)}/{file_name}"
 
-def verify_face_ai(captured_img_path, uid, history_id):
+def verify_face_ai(captured_img_path, uid):
     full_captured_path = os.path.join(BASE_DIR, captured_img_path)
     known_face_path = os.path.join(KNOWN_FACES_DIR, f"{uid}.jpg")
     file_name = os.path.basename(full_captured_path)
-    
-    status = "DENIED"
-    relative_final_path = captured_img_path
-    ws_payload = None
     
     try:
         if not os.path.exists(known_face_path):
             final_img_path = os.path.join(WARNING_DIR, file_name)
             relative_final_path = f"security_warnings/{file_name}"
             shutil.move(full_captured_path, final_img_path)
-            status = "NO_REGISTRATION_FACE"
-            ws_payload = {"status": "bad", "id": uid, "message": "Thẻ hợp lệ nhưng chưa đăng ký khuôn mặt"}
+            
+            create_history_record(uid, "NO_REGISTRATION_FACE", relative_final_path)
+            if send_event_callback:
+                send_event_callback({"status": "bad", "id": uid, "message": "Thẻ hợp lệ nhưng chưa đăng ký khuôn mặt"})
             return
             
         result = DeepFace.verify(
             img1_path=full_captured_path, img2_path=known_face_path, 
             model_name="ArcFace", detector_backend="mtcnn",
-            distance_metric="cosine", enforce_detection=True,
-            anti_spoofing=True 
+            distance_metric="cosine", enforce_detection=True, anti_spoofing=True 
         )
         
         is_real = result.get("is_real", True)
         
-        if is_real and result.get("distance", 1.0) <= 0.6:
-            final_img_path = os.path.join(ACCEPTED_DIR, file_name)
-            relative_final_path = f"accepted_access/{file_name}"
-            shutil.move(full_captured_path, final_img_path)
-            status = "SUCCESS"
-            ws_payload = {"status": "ok", "id": uid, "message": f"Xác thực khuôn mặt trùng khớp ({uid})"} 
+        if is_real and result.get("distance", 1.0) <= 0.68:
+            # THÀNH CÔNG: Xóa ảnh tạm, Không lưu Database
+            if os.path.exists(full_captured_path):
+                os.remove(full_captured_path)
+            if send_event_callback:
+                send_event_callback({"status": "ok", "id": uid, "message": f"Xác thực khuôn mặt trùng khớp ({uid})"})
         else:
+            # THẤT BẠI: Di chuyển ảnh vào thư mục cảnh báo, Lưu Database
             final_img_path = os.path.join(WARNING_DIR, file_name)
             relative_final_path = f"security_warnings/{file_name}"
             shutil.move(full_captured_path, final_img_path)
-            status = "FAKE_OR_STRANGER"
             
             msg = f"Cảnh báo: Khuôn mặt không khớp ({uid})" if is_real else f"Phát hiện hình ảnh giả mạo! ({uid})"
-            ws_payload = {"status": "bad", "id": "UNKNOWN", "message": msg}
-            
+            create_history_record("UNKNOWN", "FAKE_OR_STRANGER", relative_final_path)
+            if send_event_callback:
+                send_event_callback({"status": "bad", "id": "UNKNOWN", "message": msg})
+                
     except ValueError:
         final_img_path = os.path.join(WARNING_DIR, file_name)
         relative_final_path = f"security_warnings/{file_name}"
         if os.path.exists(full_captured_path): 
             shutil.move(full_captured_path, final_img_path)
-        status = "FACE_NOT_FOUND"
-        ws_payload = {"status": "bad", "id": uid, "message": "Không tìm thấy khuôn mặt"}
+            
+        create_history_record(uid, "FACE_NOT_FOUND", relative_final_path)
+        if send_event_callback:
+            send_event_callback({"status": "bad", "id": uid, "message": "Không tìm thấy khuôn mặt"})
     except Exception:
-        status = "SYSTEM_ERROR"
-        ws_payload = {"status": "bad", "id": uid, "message": "Lỗi hệ thống AI"}
-    finally:
-        if history_id: 
-            update_history_record(history_id, status, relative_final_path)
-        if send_event_callback and ws_payload:
-            send_event_callback(ws_payload)
+        if send_event_callback:
+            send_event_callback({"status": "bad", "id": uid, "message": "Lỗi hệ thống AI"})
+        
 
-def identify_face_ai(captured_img_path, history_id):
+def identify_face_ai(captured_img_path):
     full_captured_path = os.path.join(BASE_DIR, captured_img_path)
     file_name = os.path.basename(full_captured_path)
     
-    status = "DENIED"
-    relative_final_path = captured_img_path
-    uid_found = None
-    ws_payload = None
-    
     try:
         dfs = DeepFace.find(
-            img_path=full_captured_path, 
-            db_path=KNOWN_FACES_DIR, 
-            model_name="ArcFace", 
-            detector_backend="mtcnn",
-            distance_metric="cosine", 
-            enforce_detection=True,
-            anti_spoofing=True, 
-            silent=True
+            img_path=full_captured_path, db_path=KNOWN_FACES_DIR, 
+            model_name="ArcFace", detector_backend="mtcnn",
+            distance_metric="cosine", enforce_detection=True,
+            anti_spoofing=True, silent=True
         )
         
         if len(dfs) > 0 and not dfs[0].empty:
             best_match = dfs[0].iloc[0]
-            if best_match['distance'] <= 0.6:
+            if best_match['distance'] <= 0.62:
                 uid_found = os.path.basename(best_match['identity']).replace(".jpg", "").split('_')[0]
-                final_img_path = os.path.join(ACCEPTED_DIR, file_name)
-                relative_final_path = f"accepted_access/{file_name}"
-                shutil.move(full_captured_path, final_img_path)
-                status = "SUCCESS"
-                if best_match['distance'] < 0.40: #thay doi anh profile neu anh < 0.4
+                
+                # Vẫn giữ logic tự học nếu khuôn mặt rõ nét
+                if best_match['distance'] < 0.40:
                     existing_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{uid_found}_*.jpg"))
                     existing_imgs.sort(key=os.path.getmtime) 
-                    
                     while len(existing_imgs) >= 5:
                         os.remove(existing_imgs.pop(0))
-                        
                     new_timestamp = int(time.time())
                     new_face_path = os.path.join(KNOWN_FACES_DIR, f"{uid_found}_{new_timestamp}.jpg")
-                    shutil.copy(final_img_path, new_face_path)
-                    
+                    shutil.copy(full_captured_path, new_face_path)
                     clear_face_cache()
+                
+                # THÀNH CÔNG: Xóa ảnh tạm, Không lưu Database
+                if os.path.exists(full_captured_path):
+                    os.remove(full_captured_path)
+                    
                 mqtt_client.publish(MQTT_TOPIC_CMD, "FACE_SUCCESS")
-                ws_payload = {"status": "ok", "id": uid_found, "message": f"Mở cửa bằng khuôn mặt ({uid_found})"}
+                if send_event_callback:
+                    send_event_callback({"status": "ok", "id": uid_found, "message": f"Mở cửa bằng khuôn mặt ({uid_found})"})
             else:
                 raise ValueError("Distance above threshold")
         else:
              raise ValueError("No match found")
              
     except Exception:
+        # NHẬN DIỆN SAI: Di chuyển ảnh, Lưu DB và báo ESP32
         final_img_path = os.path.join(WARNING_DIR, file_name)
         relative_final_path = f"security_warnings/{file_name}"
         if os.path.exists(full_captured_path): 
             shutil.move(full_captured_path, final_img_path)
-        status = "UNKNOWN_FACE"
-        
+            
+        create_history_record("UNKNOWN", "UNKNOWN_FACE", relative_final_path)
         mqtt_client.publish(MQTT_TOPIC_CMD, "FACE_DENIED")
-        ws_payload = {"status": "bad", "id": "UNKNOWN", "message": "Mở cửa bằng khuôn mặt thất bại"}
-    finally:
-        if history_id: 
-            update_history_record(history_id, status, relative_final_path, final_uid=uid_found)
-        if send_event_callback and ws_payload:
-            send_event_callback(ws_payload)
+        
+        if send_event_callback:
+            send_event_callback({"status": "bad", "id": "UNKNOWN", "message": "Mở cửa bằng khuôn mặt thất bại"})
 
 def on_connect(client, userdata, flags, rc):
     client.subscribe(MQTT_TOPIC_LOG)
@@ -229,12 +216,13 @@ def on_message(client, userdata, msg):
             send_event_callback({"status": "ok", "id": data, "message": "Truy cập bằng thẻ Admin"})
 
     elif event == "REQUEST_FACE_AUTH" and data == "HOLD":
+        # Bắt buộc chụp ảnh để AI có dữ liệu chạy, nhưng không lưu DB trước
         img_path = capture_snapshot("FACE_AUTH", "UNKNOWN", target_dir=TEMP_DIR)
-        history_id = create_history_record(uid="FACE_REC", status="PENDING", image_url=img_path)
-        if img_path and history_id:
-            identify_face_ai(img_path, history_id)
+        if img_path:
+            identify_face_ai(img_path)
 
     elif event == "ADMIN_ADDED_CARD":
+        # Thêm thẻ -> Chụp ảnh, Lưu ảnh, Lưu Database
         img_path = capture_snapshot("REGISTRATION", data, is_registration=True)
         create_history_record(uid=data, status="ADMIN_REGISTERED", image_url=img_path)
         clear_face_cache() 
@@ -242,50 +230,49 @@ def on_message(client, userdata, msg):
             send_event_callback({"status": "ok", "id": data, "message": f"Đã thêm thẻ {data}"})
 
     elif event == "GRANTED" and data == "PASSWORD":
-        img_path = capture_snapshot("GRANTED_PASS", data, target_dir=ACCEPTED_DIR)
-        create_history_record(uid="PASSWORD", status="SUCCESS", image_url=img_path)
+        # Thành công -> KHÔNG chụp ảnh, KHÔNG lưu DB
         if send_event_callback: 
             send_event_callback({"status": "ok", "id": "Passcode", "message": "Mở cửa bằng Mật khẩu"})
 
     elif event == "GRANTED" and data not in ["PASSWORD", "FACE_ID_SUCCESS"]:
         check_anomaly(data)
+        # Bắt buộc chụp ảnh để AI xác thực bước 2, nhưng không lưu DB trước
         img_path = capture_snapshot("TEMP", data, target_dir=TEMP_DIR)
-        history_id = create_history_record(uid=data, status="PENDING", image_url=img_path)
-        if img_path and history_id:
-            verify_face_ai(img_path, data, history_id)
+        if img_path:
+            verify_face_ai(img_path, data)
             
     elif event == "ADMIN_DELETED_CARD":
-        # 1. Xóa ảnh gốc (UID.jpg)
+        # (Đã cập nhật ở logic xóa ảnh tự học từ trước)
         target_img_path = os.path.join(KNOWN_FACES_DIR, f"{data}.jpg")
         if os.path.exists(target_img_path):
             os.remove(target_img_path)
             
-        # 2. Quét và xóa toàn bộ ảnh tự học cập nhật thêm (UID_timestamp.jpg)
         dynamic_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{data}_*.jpg"))
-        for img_path in dynamic_imgs:
-            try:
-                os.remove(img_path)
-            except Exception as e:
-                logging.error(f"Lỗi khi xóa ảnh tự học {img_path}: {e}")
-
-        # 3. Dọn dẹp bộ nhớ đệm (cache) để DeepFace trích xuất lại đặc trưng cho lần sau
+        for p in dynamic_imgs:
+            try: os.remove(p)
+            except: pass
+            
         clear_face_cache()
-        
         if send_event_callback: 
-            send_event_callback({"status": "ok", "id": data, "message": f"Đã xóa thẻ và toàn bộ dữ liệu khuôn mặt ({data})"})
+            send_event_callback({"status": "ok", "id": data, "message": f"Đã xóa thẻ {data}"})
 
-    elif event in ["CLONED_WARNING", "PASS_LOCKED", "RFID_LOCKED"]:
+    # THÊM "FACE_LOCKED" VÀO DANH SÁCH BÁO ĐỘNG
+    # ĐÃ THÊM LẠI "CLONED_WARNING" VÀO DANH SÁCH CHỤP ẢNH TỨC THÌ
+    elif event in ["CLONED_WARNING", "PASS_LOCKED", "RFID_LOCKED", "FACE_LOCKED"]:
+        # Chụp ảnh, Lưu ảnh, Lưu Database
         img_path = capture_snapshot(event, data, target_dir=WARNING_DIR)
         create_history_record(uid=data, status=event, image_url=img_path)        
         
         if send_event_callback:
             messages = {
                 "PASS_LOCKED": "Báo động: Sai mật khẩu 5 lần",
-                "RFID_LOCKED": "Báo động: Quẹt thẻ sai 5 lần"
+                "RFID_LOCKED": "Báo động: Quẹt thẻ sai 5 lần",
+                "FACE_LOCKED": "Báo động: Quét mặt sai 5 lần",
+                "CLONED_WARNING": f"Phát hiện thẻ giả mạo!"
             }
             send_event_callback({
                 "status": "bad", 
-                "id": "UNKNOWN", 
+                "id": data, # Truyền thẳng data (UID) lên Frontend thay vì "UNKNOWN"
                 "message": messages.get(event, f"Cảnh báo: {event}")
             })
 
