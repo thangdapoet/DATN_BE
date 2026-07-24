@@ -19,9 +19,7 @@ from pydantic import BaseModel
 import glob
 import json
 
-# Định nghĩa mật khẩu để truy cập thư mục người dùng trên Web
 def get_web_admin_password():
-    # Đọc mật khẩu từ file, nếu file chưa có thì mặc định là "admin"
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             config = json.load(f)
@@ -29,7 +27,6 @@ def get_web_admin_password():
     return "admin"
 
 def set_web_admin_password(new_password):
-    # Lưu mật khẩu mới đè vào file
     with open(CONFIG_FILE, "w") as f:
         json.dump({"password": new_password}, f)
 class AdminAuth(BaseModel):
@@ -147,19 +144,17 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/api/users")
 def get_users():
     users = []
-    # Quét toàn bộ ảnh trong thư mục known_faces
     images = glob.glob(os.path.join(KNOWN_FACES_DIR, "*.jpg"))
     for img_path in images:
         filename = os.path.basename(img_path)
         uid = filename.split('.')[0]
-        
-        # Chỉ lấy file ảnh gốc (UID.jpg), bỏ qua các file tự học (UID_timestamp.jpg)
         if "_" not in uid:
             users.append({
                 "uid": uid,
                 "image_url": f"known_faces/{filename}"
             })
     return {"users": users}
+    
 @app.post("/api/verify-admin")
 def verify_admin(data: AdminAuth):
     if data.password == get_web_admin_password():
@@ -177,3 +172,47 @@ def change_admin_password(data: ChangePassAuth):
          
     set_web_admin_password(data.new_password)
     return {"status": "success", "message": "Đổi mật khẩu thành công"}
+@app.delete("/api/users/{uid}")
+def delete_user(uid: str):
+    #xoa anh goc
+    target_img_path = os.path.join(KNOWN_FACES_DIR, f"{uid}.jpg")
+    if os.path.exists(target_img_path):
+        os.remove(target_img_path)
+        
+    #xoa anh tu hoc
+    dynamic_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{uid}_*.jpg"))
+    for p in dynamic_imgs:
+        try: os.remove(p)
+        except: pass
+        
+    #cap nhat lai face cache
+    backend.clear_face_cache()
+    
+    #gui mqtt cho esp32 de xoa the
+
+    backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {uid}")
+
+    backend.create_history_record(uid, "WEB_ADMIN_DELETED", None)
+ 
+    if backend.send_event_callback:
+        backend.send_event_callback({
+            "status": "ok", 
+            "id": uid, 
+            "message": f"Đã thu hồi hồ sơ và thẻ {uid} từ Web"
+        })
+
+    return {"status": "success", "message": f"Đã xóa người dùng {uid}"}
+@app.post("/api/remote-unlock")
+def remote_unlock():
+    # Bắn lệnh mở cửa xuống ESP32
+    backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_UNLOCK")
+    # Lưu vào lịch sử để kiểm soát
+    backend.create_history_record("WEB_ADMIN", "WEB_REMOTE_UNLOCK", None)
+    return {"status": "success", "message": "Đã gửi lệnh mở cửa"}
+
+@app.post("/api/remote-stop-alarm")
+def remote_stop_alarm():
+    # Bắn lệnh tắt còi xuống ESP32
+    backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_STOP_ALARM")
+    backend.create_history_record("WEB_ADMIN", "WEB_STOPPED_ALARM", None)
+    return {"status": "success", "message": "Đã tắt báo động"}

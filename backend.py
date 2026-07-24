@@ -31,9 +31,7 @@ TEMP_DIR = os.path.join(BASE_DIR, "temp_captures")
 
 for folder in [KNOWN_FACES_DIR, ACCEPTED_DIR, WARNING_DIR, TEMP_DIR]:
     os.makedirs(folder, exist_ok=True)
-
 access_history = {}
-
 def clear_face_cache():
     cache_file = os.path.join(KNOWN_FACES_DIR, "representations_arcface.pkl") # Đổi sang arcface
     if os.path.exists(cache_file):
@@ -119,7 +117,6 @@ def verify_face_ai(captured_img_path, uid):
         is_real = result.get("is_real", True)
         
         if is_real and result.get("distance", 1.0) <= 0.68:
-            # THÀNH CÔNG: Xóa ảnh tạm, Không lưu Database
             if os.path.exists(full_captured_path):
                 os.remove(full_captured_path)
             if send_event_callback:
@@ -190,7 +187,6 @@ def identify_face_ai(captured_img_path):
              raise ValueError("No match found")
              
     except Exception:
-        # NHẬN DIỆN SAI: Di chuyển ảnh, Lưu DB và báo ESP32
         final_img_path = os.path.join(WARNING_DIR, file_name)
         relative_final_path = f"security_warnings/{file_name}"
         if os.path.exists(full_captured_path): 
@@ -216,13 +212,11 @@ def on_message(client, userdata, msg):
             send_event_callback({"status": "ok", "id": data, "message": "Truy cập bằng thẻ Admin"})
 
     elif event == "REQUEST_FACE_AUTH" and data == "HOLD":
-        # Bắt buộc chụp ảnh để AI có dữ liệu chạy, nhưng không lưu DB trước
         img_path = capture_snapshot("FACE_AUTH", "UNKNOWN", target_dir=TEMP_DIR)
         if img_path:
             identify_face_ai(img_path)
 
     elif event == "ADMIN_ADDED_CARD":
-        # Thêm thẻ -> Chụp ảnh, Lưu ảnh, Lưu Database
         img_path = capture_snapshot("REGISTRATION", data, is_registration=True)
         create_history_record(uid=data, status="ADMIN_REGISTERED", image_url=img_path)
         clear_face_cache() 
@@ -230,7 +224,6 @@ def on_message(client, userdata, msg):
             send_event_callback({"status": "ok", "id": data, "message": f"Đã thêm thẻ {data}"})
 
     elif event == "GRANTED" and data == "PASSWORD":
-        # Thành công -> KHÔNG chụp ảnh, KHÔNG lưu DB
         if send_event_callback: 
             send_event_callback({"status": "ok", "id": "Passcode", "message": "Mở cửa bằng mật khẩu"})
 
@@ -253,7 +246,6 @@ def on_message(client, userdata, msg):
                 verify_face_ai(img_path, data)
             
     elif event == "ADMIN_DELETED_CARD":
-        # (Đã cập nhật ở logic xóa ảnh tự học từ trước)
         target_img_path = os.path.join(KNOWN_FACES_DIR, f"{data}.jpg")
         if os.path.exists(target_img_path):
             os.remove(target_img_path)
@@ -267,8 +259,6 @@ def on_message(client, userdata, msg):
         if send_event_callback: 
             send_event_callback({"status": "ok", "id": data, "message": f"Đã xóa thẻ {data}"})
 
-    # THÊM "FACE_LOCKED" VÀO DANH SÁCH BÁO ĐỘNG
-    # ĐÃ THÊM LẠI "CLONED_WARNING" VÀO DANH SÁCH CHỤP ẢNH TỨC THÌ
     elif event in ["CLONED_WARNING", "PASS_LOCKED", "RFID_LOCKED", "FACE_LOCKED"]:
         # Chụp ảnh, Lưu ảnh, Lưu Database
         img_path = capture_snapshot(event, data, target_dir=WARNING_DIR)
@@ -283,7 +273,7 @@ def on_message(client, userdata, msg):
             }
             send_event_callback({
                 "status": "bad", 
-                "id": data, # Truyền thẳng data (UID) lên Frontend thay vì "UNKNOWN"
+                "id": data,
                 "message": messages.get(event, f"Cảnh báo: {event}")
             })
 
