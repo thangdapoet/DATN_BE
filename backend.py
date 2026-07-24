@@ -42,9 +42,9 @@ def clear_face_cache():
 def check_anomaly(uid):
     current_time = time.time()
     access_history.setdefault(uid, []).append(current_time)
-    access_history[uid] = [t for t in access_history[uid] if current_time - t <= 300]
+    access_history[uid] = [t for t in access_history[uid] if current_time - t <= 200]
     
-    return len(access_history[uid]) > 3
+    return len(access_history[uid]) > 5
 
 def create_history_record(uid, status, image_url=None):
     db = SessionLocal()
@@ -232,14 +232,25 @@ def on_message(client, userdata, msg):
     elif event == "GRANTED" and data == "PASSWORD":
         # Thành công -> KHÔNG chụp ảnh, KHÔNG lưu DB
         if send_event_callback: 
-            send_event_callback({"status": "ok", "id": "Passcode", "message": "Mở cửa bằng Mật khẩu"})
+            send_event_callback({"status": "ok", "id": "Passcode", "message": "Mở cửa bằng mật khẩu"})
 
     elif event == "GRANTED" and data not in ["PASSWORD", "FACE_ID_SUCCESS"]:
-        check_anomaly(data)
-        # Bắt buộc chụp ảnh để AI xác thực bước 2, nhưng không lưu DB trước
-        img_path = capture_snapshot("TEMP", data, target_dir=TEMP_DIR)
-        if img_path:
-            verify_face_ai(img_path, data)
+        is_spam = check_anomaly(data)
+        
+        if is_spam:
+            img_path = capture_snapshot("SPAM_WARNING", data, target_dir=WARNING_DIR)
+            create_history_record(uid=data, status="SPAM_WARNING", image_url=img_path)
+            
+            if send_event_callback:
+                send_event_callback({
+                    "status": "bad", 
+                    "id": data, 
+                    "message": f"SPAM: Thẻ ({data}) quẹt liên tục bất thường!"
+                })
+        else:
+            img_path = capture_snapshot("TEMP", data, target_dir=TEMP_DIR)
+            if img_path:
+                verify_face_ai(img_path, data)
             
     elif event == "ADMIN_DELETED_CARD":
         # (Đã cập nhật ở logic xóa ảnh tự học từ trước)

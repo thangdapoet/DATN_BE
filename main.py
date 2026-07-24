@@ -8,11 +8,37 @@ import asyncio
 import cv2
 import time
 import os
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
+from pydantic import BaseModel
+CONFIG_FILE = os.path.join(BASE_DIR, "web_config.json")
 from app.database import Base, engine
 from app.routers import history
 import backend
+from pydantic import BaseModel
+import glob
+import json
 
+# Định nghĩa mật khẩu để truy cập thư mục người dùng trên Web
+def get_web_admin_password():
+    # Đọc mật khẩu từ file, nếu file chưa có thì mặc định là "admin"
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            config = json.load(f)
+            return config.get("password", "admin")
+    return "admin"
+
+def set_web_admin_password(new_password):
+    # Lưu mật khẩu mới đè vào file
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({"password": new_password}, f)
+class AdminAuth(BaseModel):
+    password: str
+class ChangePassAuth(BaseModel):
+    old_password: str
+    new_password: str
+class AdminAuth(BaseModel):
+    password: str
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -117,3 +143,37 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+
+@app.get("/api/users")
+def get_users():
+    users = []
+    # Quét toàn bộ ảnh trong thư mục known_faces
+    images = glob.glob(os.path.join(KNOWN_FACES_DIR, "*.jpg"))
+    for img_path in images:
+        filename = os.path.basename(img_path)
+        uid = filename.split('.')[0]
+        
+        # Chỉ lấy file ảnh gốc (UID.jpg), bỏ qua các file tự học (UID_timestamp.jpg)
+        if "_" not in uid:
+            users.append({
+                "uid": uid,
+                "image_url": f"known_faces/{filename}"
+            })
+    return {"users": users}
+@app.post("/api/verify-admin")
+def verify_admin(data: AdminAuth):
+    if data.password == get_web_admin_password():
+        return {"status": "success"}
+    return {"status": "error", "message": "Sai mật khẩu"}
+@app.post("/api/change-admin-password")
+def change_admin_password(data: ChangePassAuth):
+    current_pass = get_web_admin_password()
+    
+    if data.old_password != current_pass:
+        return {"status": "error", "message": "Mật khẩu cũ không chính xác"}
+    
+    if len(data.new_password) < 4:
+         return {"status": "error", "message": "Mật khẩu mới phải từ 4 ký tự trở lên"}
+         
+    set_web_admin_password(data.new_password)
+    return {"status": "success", "message": "Đổi mật khẩu thành công"}
