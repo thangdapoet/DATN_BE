@@ -149,9 +149,13 @@ def get_users():
         filename = os.path.basename(img_path)
         uid = filename.split('.')[0]
         if "_" not in uid:
+            # Lấy thời gian sửa đổi (modify time) của file ảnh
+            mod_time = int(os.path.getmtime(img_path))
+            
             users.append({
                 "uid": uid,
-                "image_url": f"known_faces/{filename}"
+                # Nối thêm tham số ?v=... vào URL để vô hiệu hóa cache của trình duyệt
+                "image_url": f"known_faces/{filename}?v={mod_time}"
             })
     return {"users": users}
     
