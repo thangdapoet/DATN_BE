@@ -241,7 +241,6 @@ def on_message(client, userdata, msg):
         except ValueError as e:
             err_msg = "Phát hiện ảnh giả mạo" if "Spoofing" in str(e) else "Không có khuôn mặt"
             
-            # Chuyển ảnh lỗi sang thư mục cảnh báo thay vì để trong hồ sơ
             file_name = os.path.basename(full_path)
             warning_path = os.path.join(WARNING_DIR, f"FAIL_REG_{file_name}")
             if os.path.exists(full_path):
@@ -259,7 +258,6 @@ def on_message(client, userdata, msg):
                     "message": f"Đăng ký thất bại: {err_msg}. Đã hủy thẻ!"
                 })
         except Exception as e:
-            # Bắt các lỗi hệ thống khác
             if os.path.exists(full_path):
                 os.remove(full_path)
             mqtt_client.publish(MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {data}")
