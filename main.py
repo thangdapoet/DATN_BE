@@ -149,12 +149,10 @@ def get_users():
         filename = os.path.basename(img_path)
         uid = filename.split('.')[0]
         if "_" not in uid:
-            # Lấy thời gian sửa đổi (modify time) của file ảnh
             mod_time = int(os.path.getmtime(img_path))
             
             users.append({
                 "uid": uid,
-                # Nối thêm tham số ?v=... vào URL để vô hiệu hóa cache của trình duyệt
                 "image_url": f"known_faces/{filename}?v={mod_time}"
             })
     return {"users": users}
@@ -208,7 +206,7 @@ def delete_user(uid: str):
     return {"status": "success", "message": f"Đã xóa người dùng {uid}"}
 @app.post("/api/remote-unlock")
 def remote_unlock():
-    # Bắn lệnh mở cửa xuống ESP32
+   #gui mqtt de esp32 mo cua
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_UNLOCK")
     # Lưu vào lịch sử để kiểm soát
     backend.create_history_record("WEB_ADMIN", "WEB_REMOTE_UNLOCK", None)
@@ -216,7 +214,7 @@ def remote_unlock():
 
 @app.post("/api/remote-stop-alarm")
 def remote_stop_alarm():
-    # Bắn lệnh tắt còi xuống ESP32
+    # gui mqtt de esp32 tat coi
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_STOP_ALARM")
     backend.create_history_record("WEB_ADMIN", "WEB_STOPPED_ALARM", None)
     return {"status": "success", "message": "Đã tắt báo động"}

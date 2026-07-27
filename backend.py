@@ -33,7 +33,7 @@ for folder in [KNOWN_FACES_DIR, ACCEPTED_DIR, WARNING_DIR, TEMP_DIR]:
     os.makedirs(folder, exist_ok=True)
 access_history = {}
 def clear_face_cache():
-    cache_file = os.path.join(KNOWN_FACES_DIR, "representations_arcface.pkl") # Đổi sang arcface
+    cache_file = os.path.join(KNOWN_FACES_DIR, "representations_arcface.pkl")
     if os.path.exists(cache_file):
         os.remove(cache_file)
 
@@ -122,7 +122,6 @@ def verify_face_ai(captured_img_path, uid):
             if send_event_callback:
                 send_event_callback({"status": "ok", "id": uid, "message": f"Xác thực khuôn mặt trùng khớp ({uid})"})
         else:
-            # THẤT BẠI: Di chuyển ảnh vào thư mục cảnh báo, Lưu Database
             final_img_path = os.path.join(WARNING_DIR, file_name)
             relative_final_path = f"security_warnings/{file_name}"
             shutil.move(full_captured_path, final_img_path)
@@ -162,8 +161,7 @@ def identify_face_ai(captured_img_path):
             best_match = dfs[0].iloc[0]
             if best_match['distance'] <= 0.62:
                 uid_found = os.path.basename(best_match['identity']).replace(".jpg", "").split('_')[0]
-                
-                # Vẫn giữ logic tự học nếu khuôn mặt rõ nét
+
                 if best_match['distance'] < 0.40:
                     existing_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{uid_found}_*.jpg"))
                     existing_imgs.sort(key=os.path.getmtime) 
@@ -173,8 +171,7 @@ def identify_face_ai(captured_img_path):
                     new_face_path = os.path.join(KNOWN_FACES_DIR, f"{uid_found}_{new_timestamp}.jpg")
                     shutil.copy(full_captured_path, new_face_path)
                     clear_face_cache()
-                
-                # THÀNH CÔNG: Xóa ảnh tạm, Không lưu Database
+ 
                 if os.path.exists(full_captured_path):
                     os.remove(full_captured_path)
                     
@@ -218,10 +215,56 @@ def on_message(client, userdata, msg):
 
     elif event == "ADMIN_ADDED_CARD":
         img_path = capture_snapshot("REGISTRATION", data, is_registration=True)
-        create_history_record(uid=data, status="ADMIN_REGISTERED", image_url=img_path)
-        clear_face_cache() 
-        if send_event_callback: 
-            send_event_callback({"status": "ok", "id": data, "message": f"Đã thêm thẻ {data}"})
+        if not img_path:
+            return
+            
+        full_path = os.path.join(BASE_DIR, img_path)
+        
+        try:
+            faces = DeepFace.extract_faces(
+                img_path=full_path, 
+                detector_backend="mtcnn", 
+                enforce_detection=True, 
+                anti_spoofing=True     
+            )
+            
+            is_real = any(face.get("is_real", True) for face in faces)
+            
+            if not is_real:
+                raise ValueError("Spoofing detected")
+                
+            create_history_record(uid=data, status="ADMIN_REGISTERED", image_url=img_path)
+            clear_face_cache() 
+            if send_event_callback: 
+                send_event_callback({"status": "ok", "id": data, "message": f"Đã đăng ký thẻ  ({data})"})
+
+        except ValueError as e:
+            err_msg = "Phát hiện ảnh giả mạo" if "Spoofing" in str(e) else "Không có khuôn mặt"
+            
+            # Chuyển ảnh lỗi sang thư mục cảnh báo thay vì để trong hồ sơ
+            file_name = os.path.basename(full_path)
+            warning_path = os.path.join(WARNING_DIR, f"FAIL_REG_{file_name}")
+            if os.path.exists(full_path):
+                shutil.move(full_path, warning_path)
+            
+            rel_warning_path = f"security_warnings/FAIL_REG_{file_name}"
+            create_history_record(uid=data, status="REGISTRATION_FAILED", image_url=rel_warning_path)
+            
+            mqtt_client.publish(MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {data}")
+            
+            if send_event_callback:
+                send_event_callback({
+                    "status": "bad", 
+                    "id": data, 
+                    "message": f"Đăng ký thất bại: {err_msg}. Đã hủy thẻ!"
+                })
+        except Exception as e:
+            # Bắt các lỗi hệ thống khác
+            if os.path.exists(full_path):
+                os.remove(full_path)
+            mqtt_client.publish(MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {data}")
+            if send_event_callback:
+                send_event_callback({"status": "bad", "id": data, "message": "Lỗi AI. Đã hủy thẻ!"})
 
     elif event == "GRANTED" and data == "PASSWORD":
         if send_event_callback: 
@@ -260,7 +303,6 @@ def on_message(client, userdata, msg):
             send_event_callback({"status": "ok", "id": data, "message": f"Đã xóa thẻ {data}"})
 
     elif event in ["CLONED_WARNING", "PASS_LOCKED", "RFID_LOCKED", "FACE_LOCKED"]:
-        # Chụp ảnh, Lưu ảnh, Lưu Database
         img_path = capture_snapshot(event, data, target_dir=WARNING_DIR)
         create_history_record(uid=data, status=event, image_url=img_path)        
         
