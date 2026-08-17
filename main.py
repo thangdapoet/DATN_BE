@@ -18,6 +18,7 @@ import backend
 from pydantic import BaseModel
 import glob
 import json
+import random
 
 def get_web_admin_password():
     if os.path.exists(CONFIG_FILE):
@@ -62,7 +63,7 @@ def send_ws_event(event_data: dict):
     if shared_loop and shared_loop.is_running():
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), shared_loop)
 
-RTSP_URL = "rtsp://thangdapoet:camera1511@192.168.1.50:554/stream1"
+RTSP_URL = "rtsp://thangdapoet:15112004@192.168.1.50:554/stream1"
 latest_jpeg = None
 
 def capture_camera():
@@ -218,3 +219,19 @@ def remote_stop_alarm():
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_STOP_ALARM")
     backend.create_history_record("WEB_ADMIN", "WEB_STOPPED_ALARM", None)
     return {"status": "success", "message": "Đã tắt báo động"}
+@app.post("/api/generate-otp")
+def generate_otp():
+    # Tạo ngẫu nhiên mã 6 số
+    otp = str(random.randint(100000, 999999))
+    
+    # Gửi mã OTP xuống mạch ESP32 qua MQTT
+    backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, f"WEB_SET_OTP: {otp}")
+    
+    # Lưu vào lịch sử hệ thống
+    backend.create_history_record("WEB_ADMIN", "OTP_GENERATED", None)
+    
+    return {
+        "status": "success", 
+        "otp": otp, 
+        "message": f"Đã cấp mã OTP: {otp} (Có hiệu lực 10 phút)"
+    }

@@ -116,7 +116,7 @@ def verify_face_ai(captured_img_path, uid):
         
         is_real = result.get("is_real", True)
         
-        if is_real and result.get("distance", 1.0) <= 0.68:
+        if is_real and result.get("distance", 1.0) <= 0.5:
             if os.path.exists(full_captured_path):
                 os.remove(full_captured_path)
             if send_event_callback:
@@ -159,7 +159,7 @@ def identify_face_ai(captured_img_path):
         
         if len(dfs) > 0 and not dfs[0].empty:
             best_match = dfs[0].iloc[0]
-            if best_match['distance'] <= 0.62:
+            if best_match['distance'] <= 0.6:
                 uid_found = os.path.basename(best_match['identity']).replace(".jpg", "").split('_')[0]
 
                 if best_match['distance'] < 0.40:
