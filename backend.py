@@ -127,9 +127,9 @@ def verify_face_ai(captured_img_path, uid):
             shutil.move(full_captured_path, final_img_path)
             
             msg = f"Cảnh báo: Khuôn mặt không khớp ({uid})" if is_real else f"Phát hiện hình ảnh giả mạo! ({uid})"
-            create_history_record("UNKNOWN", "FAKE_OR_STRANGER", relative_final_path)
+            create_history_record(uid, "FAKE_OR_STRANGER", relative_final_path)
             if send_event_callback:
-                send_event_callback({"status": "bad", "id": "UNKNOWN", "message": msg})
+                send_event_callback({"status": "bad", "id": uid , "message": msg})
                 
     except ValueError:
         final_img_path = os.path.join(WARNING_DIR, file_name)
