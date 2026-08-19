@@ -1,11 +1,14 @@
-import paho.mqtt.client as mqtt
-import cv2
-import time
+# ==========================================
+# 1. IMPORTS & CẤU HÌNH HỆ THỐNG
+# ==========================================
 import os
-import numpy as np
-import shutil  
-import logging
+import time
 import glob
+import shutil
+import logging
+import numpy as np
+import cv2
+import paho.mqtt.client as mqtt
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 from deepface import DeepFace
@@ -13,6 +16,9 @@ from deepface import DeepFace
 from app.database import SessionLocal
 from app.models import History
 
+# ==========================================
+# 2. BIẾN TOÀN CỤC & ĐƯỜNG DẪN
+# ==========================================
 current_frame = None       
 send_event_callback = None 
 
@@ -31,7 +37,12 @@ TEMP_DIR = os.path.join(BASE_DIR, "temp_captures")
 
 for folder in [KNOWN_FACES_DIR, ACCEPTED_DIR, WARNING_DIR, TEMP_DIR]:
     os.makedirs(folder, exist_ok=True)
+    
 access_history = {}
+
+# ==========================================
+# 3. CÁC HÀM XỬ LÝ DATABASE & CAMERA & AI
+# ==========================================
 def clear_face_cache():
     cache_file = os.path.join(KNOWN_FACES_DIR, "representations_arcface.pkl")
     if os.path.exists(cache_file):
@@ -41,7 +52,6 @@ def check_anomaly(uid):
     current_time = time.time()
     access_history.setdefault(uid, []).append(current_time)
     access_history[uid] = [t for t in access_history[uid] if current_time - t <= 200]
-    
     return len(access_history[uid]) > 5
 
 def create_history_record(uid, status, image_url=None):
@@ -143,7 +153,6 @@ def verify_face_ai(captured_img_path, uid):
     except Exception:
         if send_event_callback:
             send_event_callback({"status": "bad", "id": uid, "message": "Lỗi hệ thống AI"})
-        
 
 def identify_face_ai(captured_img_path):
     full_captured_path = os.path.join(BASE_DIR, captured_img_path)
@@ -195,6 +204,9 @@ def identify_face_ai(captured_img_path):
         if send_event_callback:
             send_event_callback({"status": "bad", "id": "UNKNOWN", "message": "Mở cửa bằng khuôn mặt thất bại"})
 
+# ==========================================
+# 4. MQTT & BACKGROUND THREAD
+# ==========================================
 def on_connect(client, userdata, flags, rc):
     client.subscribe(MQTT_TOPIC_LOG)
 
@@ -236,7 +248,7 @@ def on_message(client, userdata, msg):
             create_history_record(uid=data, status="ADMIN_REGISTERED", image_url=img_path)
             clear_face_cache() 
             if send_event_callback: 
-                send_event_callback({"status": "ok", "id": data, "message": f"Đã đăng ký thẻ  ({data})"})
+                send_event_callback({"status": "ok", "id": data, "message": f"Đã đăng ký thẻ ({data})"})
 
         except ValueError as e:
             err_msg = "Phát hiện ảnh giả mạo" if "Spoofing" in str(e) else "Không có khuôn mặt"
@@ -252,21 +264,13 @@ def on_message(client, userdata, msg):
             mqtt_client.publish(MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {data}")
             
             if send_event_callback:
-                send_event_callback({
-                    "status": "bad", 
-                    "id": data, 
-                    "message": f"Đăng ký thất bại: {err_msg}. Đã hủy thẻ!"
-                })
-        except Exception as e:
+                send_event_callback({"status": "bad", "id": data, "message": f"Đăng ký thất bại: {err_msg}. Đã hủy thẻ!"})
+        except Exception:
             if os.path.exists(full_path):
                 os.remove(full_path)
             mqtt_client.publish(MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {data}")
             if send_event_callback:
                 send_event_callback({"status": "bad", "id": data, "message": "Lỗi AI. Đã hủy thẻ!"})
-
-    elif event == "GRANTED" and data == "PASSWORD":
-        if send_event_callback: 
-            send_event_callback({"status": "ok", "id": "Passcode", "message": "Mở cửa bằng mật khẩu"})
 
     elif event == "GRANTED" and data not in ["PASSWORD", "FACE_ID_SUCCESS"]:
         is_spam = check_anomaly(data)
@@ -276,11 +280,7 @@ def on_message(client, userdata, msg):
             create_history_record(uid=data, status="SPAM_WARNING", image_url=img_path)
             
             if send_event_callback:
-                send_event_callback({
-                    "status": "bad", 
-                    "id": data, 
-                    "message": f"SPAM: Thẻ ({data}) quẹt liên tục bất thường!"
-                })
+                send_event_callback({"status": "bad", "id": data, "message": f"SPAM: Thẻ ({data}) quẹt liên tục bất thường!"})
         else:
             img_path = capture_snapshot("TEMP", data, target_dir=TEMP_DIR)
             if img_path:

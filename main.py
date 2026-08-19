@@ -1,42 +1,50 @@
+# ==========================================
+# 1. IMPORTS
+# ==========================================
+import os
+import time
+import glob
+import json
+import random
+import threading
+import asyncio
+import cv2
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
-import threading
-import asyncio
-import cv2
-import time
-import os
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
 from pydantic import BaseModel
-CONFIG_FILE = os.path.join(BASE_DIR, "web_config.json")
+
 from app.database import Base, engine
 from app.routers import history
 import backend
-from pydantic import BaseModel
-import glob
-import json
-import random
 
-def get_web_admin_password():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            config = json.load(f)
-            return config.get("password", "admin")
-    return "admin"
+# ==========================================
+# 2. CẤU HÌNH & CONSTANTS
+# ==========================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
+CONFIG_FILE = os.path.join(BASE_DIR, "web_config.json")
+RTSP_URL = "rtsp://thangdapoet:15112004@192.168.1.50:554/stream1"
 
-def set_web_admin_password(new_password):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump({"password": new_password}, f)
+# ==========================================
+# 3. MODELS (PYDANTIC)
+# ==========================================
+class DoorPassRequest(BaseModel):
+    new_password: str
+
 class AdminAuth(BaseModel):
     password: str
+
 class ChangePassAuth(BaseModel):
     old_password: str
     new_password: str
-class AdminAuth(BaseModel):
-    password: str
+
+# ==========================================
+# 4. WEBSOCKET MANAGER
+# ==========================================
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -63,7 +71,9 @@ def send_ws_event(event_data: dict):
     if shared_loop and shared_loop.is_running():
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), shared_loop)
 
-RTSP_URL = "rtsp://thangdapoet:15112004@192.168.1.50:554/stream1"
+# ==========================================
+# 5. CAMERA & VIDEO STREAMING
+# ==========================================
 latest_jpeg = None
 
 def capture_camera():
@@ -91,24 +101,37 @@ def generate_video():
             )
         time.sleep(0.05)
 
+# ==========================================
+# 6. HELPER FUNCTIONS
+# ==========================================
+def get_web_admin_password():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            config = json.load(f)
+            return config.get("password", "admin")
+    return "admin"
+
+def set_web_admin_password(new_password):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({"password": new_password}, f)
+
+# ==========================================
+# 7. FASTAPI INIT & MIDDLEWARE
+# ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global shared_loop
     shared_loop = asyncio.get_running_loop()
-
     backend.send_event_callback = send_ws_event
     
     threading.Thread(target=capture_camera, daemon=True).start()
     threading.Thread(target=backend.start_mqtt_background, daemon=True).start()
-    
     yield 
 
 app = FastAPI(title="SmartLock API", lifespan=lifespan)
 app.include_router(history.router)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 static_dirs = ["known_faces", "accepted_access", "security_warnings", "temp_captures"]
-
 for folder in static_dirs:
     folder_path = os.path.join(BASE_DIR, folder)
     os.makedirs(folder_path, exist_ok=True)
@@ -122,6 +145,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ==========================================
+# 8. API ROUTERS
+# ==========================================
 @app.get("/")
 def read_root():
     return {"status": "ok"}
@@ -151,7 +177,6 @@ def get_users():
         uid = filename.split('.')[0]
         if "_" not in uid:
             mod_time = int(os.path.getmtime(img_path))
-            
             users.append({
                 "uid": uid,
                 "image_url": f"known_faces/{filename}?v={mod_time}"
@@ -163,38 +188,31 @@ def verify_admin(data: AdminAuth):
     if data.password == get_web_admin_password():
         return {"status": "success"}
     return {"status": "error", "message": "Sai mật khẩu"}
+
 @app.post("/api/change-admin-password")
 def change_admin_password(data: ChangePassAuth):
     current_pass = get_web_admin_password()
-    
     if data.old_password != current_pass:
         return {"status": "error", "message": "Mật khẩu cũ không chính xác"}
-    
     if len(data.new_password) < 4:
          return {"status": "error", "message": "Mật khẩu mới phải từ 4 ký tự trở lên"}
          
     set_web_admin_password(data.new_password)
     return {"status": "success", "message": "Đổi mật khẩu thành công"}
+
 @app.delete("/api/users/{uid}")
 def delete_user(uid: str):
-    #xoa anh goc
     target_img_path = os.path.join(KNOWN_FACES_DIR, f"{uid}.jpg")
     if os.path.exists(target_img_path):
         os.remove(target_img_path)
         
-    #xoa anh tu hoc
     dynamic_imgs = glob.glob(os.path.join(KNOWN_FACES_DIR, f"{uid}_*.jpg"))
     for p in dynamic_imgs:
         try: os.remove(p)
         except: pass
         
-    #cap nhat lai face cache
     backend.clear_face_cache()
-    
-    #gui mqtt cho esp32 de xoa the
-
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, f"WEB_DELETE_CARD: {uid}")
-
     backend.create_history_record(uid, "WEB_ADMIN_DELETED", None)
  
     if backend.send_event_callback:
@@ -205,29 +223,23 @@ def delete_user(uid: str):
         })
 
     return {"status": "success", "message": f"Đã xóa người dùng {uid}"}
+
 @app.post("/api/remote-unlock")
 def remote_unlock():
-   #gui mqtt de esp32 mo cua
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_UNLOCK")
-    # Lưu vào lịch sử để kiểm soát
     backend.create_history_record("WEB_ADMIN", "WEB_REMOTE_UNLOCK", None)
     return {"status": "success", "message": "Đã gửi lệnh mở cửa"}
 
 @app.post("/api/remote-stop-alarm")
 def remote_stop_alarm():
-    # gui mqtt de esp32 tat coi
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, "WEB_STOP_ALARM")
     backend.create_history_record("WEB_ADMIN", "WEB_STOPPED_ALARM", None)
     return {"status": "success", "message": "Đã tắt báo động"}
+
 @app.post("/api/generate-otp")
 def generate_otp():
-    # Tạo ngẫu nhiên mã 6 số
     otp = str(random.randint(100000, 999999))
-    
-    # Gửi mã OTP xuống mạch ESP32 qua MQTT
     backend.mqtt_client.publish(backend.MQTT_TOPIC_CMD, f"WEB_SET_OTP: {otp}")
-    
-    # Lưu vào lịch sử hệ thống
     backend.create_history_record("WEB_ADMIN", "OTP_GENERATED", None)
     
     return {
@@ -235,3 +247,11 @@ def generate_otp():
         "otp": otp, 
         "message": f"Đã cấp mã OTP: {otp} (Có hiệu lực 10 phút)"
     }
+
+@app.post("/api/remote-change-door-pass")
+async def change_door_pass(req: DoorPassRequest):
+    try:
+        backend.mqtt_client.publish("quangthang/smartlock/cmd", f"WEB_CHANGE_PASS: {req.new_password}")
+        return {"status": "success", "message": "Đã gửi lệnh đổi mật khẩu cửa"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
