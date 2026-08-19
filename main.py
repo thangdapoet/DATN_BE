@@ -21,6 +21,15 @@ from app.database import Base, engine
 from app.routers import history
 import backend
 
+from pytapo import Tapo
+
+from dotenv import load_dotenv  # 👈 Thêm dòng này
+
+# Load các biến từ file .env lên
+load_dotenv()
+
+from fastapi import BackgroundTasks
+from starlette.concurrency import run_in_threadpool
 # ==========================================
 # 2. CẤU HÌNH & CONSTANTS
 # ==========================================
@@ -29,6 +38,9 @@ KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
 CONFIG_FILE = os.path.join(BASE_DIR, "web_config.json")
 RTSP_URL = "rtsp://thangdapoet:15112004@192.168.1.50:554/stream1"
 
+TAPO_IP = os.getenv("TAPO_IP", "192.168.1.50")     # 👈 Thêm dòng này
+TAPO_USER = os.getenv("TAPO_USER", "admin")         # 👈 Thêm dòng này
+TAPO_PASS = os.getenv("TAPO_PASS", "password")
 # ==========================================
 # 3. MODELS (PYDANTIC)
 # ==========================================
@@ -76,6 +88,23 @@ def send_ws_event(event_data: dict):
 # ==========================================
 latest_jpeg = None
 
+def _tapo_action(direction: str, action: str):
+    tapo = Tapo(TAPO_IP, TAPO_USER, TAPO_PASS)
+    
+    if action == "stop":
+        return "ignored_stop" # pytapo tự động ngắt, không cần gửi stop
+        
+    # TĂNG LỰC XOAY TỪ 10 LÊN 50 ĐỂ THẤY RÕ RÀNG HƠN
+    move_map = {
+        "up": (0, 50),
+        "down": (0, -50),
+        "left": (-50, 0),
+        "right": (50, 0),
+    }
+    dx, dy = move_map.get(direction, (0, 0))
+    
+    res = tapo.moveMotor(dx, dy)
+    return res  # Trả thẳng kết quả ra ngoài
 def capture_camera():
     global latest_jpeg
     cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
@@ -254,4 +283,24 @@ async def change_door_pass(req: DoorPassRequest):
         backend.mqtt_client.publish("quangthang/smartlock/cmd", f"WEB_CHANGE_PASS: {req.new_password}")
         return {"status": "success", "message": "Đã gửi lệnh đổi mật khẩu cửa"}
     except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+@app.post("/api/camera/move")
+async def move_camera(data: dict):
+    direction = data.get("direction")
+    action = data.get("action")
+    
+    try:
+        # Nhận kết quả từ threadpool
+        tapo_res = await run_in_threadpool(_tapo_action, direction, action)
+        
+        # In bằng logging của hệ thống để không bị Uvicorn nuốt mất
+        import logging
+        logging.warning(f"TAPO RES: {tapo_res}")
+        
+        # Trả về luôn cho Frontend
+        return {"status": "success", "tapo_response": tapo_res}
+    except Exception as e:
+        import logging
+        logging.error(f"TAPO ERROR: {str(e)}")
         return {"status": "error", "message": str(e)}
