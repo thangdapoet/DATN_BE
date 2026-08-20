@@ -21,26 +21,31 @@ from app.database import Base, engine
 from app.routers import history
 import backend
 
-from pytapo import Tapo
-
-from dotenv import load_dotenv  # 👈 Thêm dòng này
+from dotenv import load_dotenv
+from starlette.concurrency import run_in_threadpool
+from onvif import ONVIFCamera  # 👈 Sử dụng chuẩn ONVIF
 
 # Load các biến từ file .env lên
 load_dotenv()
 
-from fastapi import BackgroundTasks
-from starlette.concurrency import run_in_threadpool
 # ==========================================
 # 2. CẤU HÌNH & CONSTANTS
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
 CONFIG_FILE = os.path.join(BASE_DIR, "web_config.json")
-RTSP_URL = "rtsp://thangdapoet:15112004@192.168.1.50:554/stream1"
 
-TAPO_IP = os.getenv("TAPO_IP", "192.168.1.50")     # 👈 Thêm dòng này
-TAPO_USER = os.getenv("TAPO_USER", "admin")         # 👈 Thêm dòng này
-TAPO_PASS = os.getenv("TAPO_PASS", "password")
+# Thông tin IP Camera
+TAPO_IP = os.getenv("TAPO_IP", "192.168.1.50")
+ONVIF_PORT = 2020  # Cổng chuẩn của ONVIF trên Tapo
+
+# Tài khoản Local (Camera Account) dùng cho cả ONVIF và RTSP
+TAPO_LOCAL_USER = os.getenv("TAPO_LOCAL_USER", "thangdapoet")
+TAPO_LOCAL_PASS = os.getenv("TAPO_LOCAL_PASS", "15112004")
+
+# Gán tài khoản Local vào chuỗi RTSP
+RTSP_URL = f"rtsp://{TAPO_LOCAL_USER}:{TAPO_LOCAL_PASS}@{TAPO_IP}:554/stream1"
+
 # ==========================================
 # 3. MODELS (PYDANTIC)
 # ==========================================
@@ -88,23 +93,43 @@ def send_ws_event(event_data: dict):
 # ==========================================
 latest_jpeg = None
 
-def _tapo_action(direction: str, action: str):
-    tapo = Tapo(TAPO_IP, TAPO_USER, TAPO_PASS)
+def _onvif_action(direction: str, action: str):
+    """
+    Xử lý điều khiển xoay Camera bằng giao thức ONVIF.
+    Được gọi qua threadpool để không block luồng chính của FastAPI.
+    """
+    cam = ONVIFCamera(TAPO_IP, ONVIF_PORT, TAPO_LOCAL_USER, TAPO_LOCAL_PASS)
+    media = cam.create_media_service()
+    ptz = cam.create_ptz_service()
     
+    profiles = media.GetProfiles()
+    token = profiles[0].token
+
+    # Xử lý lệnh dừng (khi nhả chuột)
     if action == "stop":
-        return "ignored_stop" # pytapo tự động ngắt, không cần gửi stop
+        ptz.Stop({'ProfileToken': token})
+        return "stopped"
         
-    # TĂNG LỰC XOAY TỪ 10 LÊN 50 ĐỂ THẤY RÕ RÀNG HƠN
-    move_map = {
-        "up": (0, 50),
-        "down": (0, -50),
-        "left": (-50, 0),
-        "right": (50, 0),
-    }
-    dx, dy = move_map.get(direction, (0, 0))
+    # Xử lý lệnh xoay liên tục (khi nhấn giữ)
+    request = ptz.create_type('ContinuousMove')
+    request.ProfileToken = token
     
-    res = tapo.moveMotor(dx, dy)
-    return res  # Trả thẳng kết quả ra ngoài
+    # Tốc độ xoay: x và y nằm trong khoảng -1.0 đến 1.0
+    speed = 0.5 
+    move_map = {
+        "up": {'x': 0.0, 'y': speed},
+        "down": {'x': 0.0, 'y': -speed},
+        "left": {'x': -speed, 'y': 0.0},
+        "right": {'x': speed, 'y': 0.0},
+    }
+    
+    if direction in move_map:
+        request.Velocity = {'PanTilt': move_map[direction]}
+        ptz.ContinuousMove(request)
+        return f"moving_{direction}"
+    
+    return "invalid_direction"
+
 def capture_camera():
     global latest_jpeg
     cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
@@ -291,16 +316,7 @@ async def move_camera(data: dict):
     action = data.get("action")
     
     try:
-        # Nhận kết quả từ threadpool
-        tapo_res = await run_in_threadpool(_tapo_action, direction, action)
-        
-        # In bằng logging của hệ thống để không bị Uvicorn nuốt mất
-        import logging
-        logging.warning(f"TAPO RES: {tapo_res}")
-        
-        # Trả về luôn cho Frontend
-        return {"status": "success", "tapo_response": tapo_res}
+        onvif_res = await run_in_threadpool(_onvif_action, direction, action)
+        return {"status": "success", "camera_status": onvif_res}
     except Exception as e:
-        import logging
-        logging.error(f"TAPO ERROR: {str(e)}")
         return {"status": "error", "message": str(e)}
