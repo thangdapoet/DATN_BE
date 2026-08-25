@@ -1,6 +1,3 @@
-# ==========================================
-# 1. IMPORTS
-# ==========================================
 import os
 import time
 import glob
@@ -9,46 +6,35 @@ import random
 import threading
 import asyncio
 import cv2
-from contextlib import asynccontextmanager
 
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from dotenv import load_dotenv
+from starlette.concurrency import run_in_threadpool
+from onvif import ONVIFCamera
 
-from app.database import Base, engine
 from app.routers import history
 import backend
 
-from dotenv import load_dotenv
-from starlette.concurrency import run_in_threadpool
-from onvif import ONVIFCamera  # 👈 Sử dụng chuẩn ONVIF
-
-# Load các biến từ file .env lên
 load_dotenv()
 
-# ==========================================
-# 2. CẤU HÌNH & CONSTANTS
-# ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
 CONFIG_FILE = os.path.join(BASE_DIR, "web_config.json")
 
-# Thông tin IP Camera
 TAPO_IP = os.getenv("TAPO_IP", "192.168.1.50")
-ONVIF_PORT = 2020  # Cổng chuẩn của ONVIF trên Tapo
-
-# Tài khoản Local (Camera Account) dùng cho cả ONVIF và RTSP
+ONVIF_PORT = 2020
 TAPO_LOCAL_USER = os.getenv("TAPO_LOCAL_USER", "thangdapoet")
 TAPO_LOCAL_PASS = os.getenv("TAPO_LOCAL_PASS", "15112004")
-
-# Gán tài khoản Local vào chuỗi RTSP
 RTSP_URL = f"rtsp://{TAPO_LOCAL_USER}:{TAPO_LOCAL_PASS}@{TAPO_IP}:554/stream1"
 
-# ==========================================
-# 3. MODELS (PYDANTIC)
-# ==========================================
+
 class DoorPassRequest(BaseModel):
     new_password: str
 
@@ -59,9 +45,7 @@ class ChangePassAuth(BaseModel):
     old_password: str
     new_password: str
 
-# ==========================================
-# 4. WEBSOCKET MANAGER
-# ==========================================
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
@@ -81,6 +65,7 @@ class ConnectionManager:
             except Exception:
                 pass
 
+
 ws_manager = ConnectionManager()
 shared_loop = None
 
@@ -88,16 +73,9 @@ def send_ws_event(event_data: dict):
     if shared_loop and shared_loop.is_running():
         asyncio.run_coroutine_threadsafe(ws_manager.broadcast(event_data), shared_loop)
 
-# ==========================================
-# 5. CAMERA & VIDEO STREAMING
-# ==========================================
 latest_jpeg = None
 
 def _onvif_action(direction: str, action: str):
-    """
-    Xử lý điều khiển xoay Camera bằng giao thức ONVIF.
-    Được gọi qua threadpool để không block luồng chính của FastAPI.
-    """
     cam = ONVIFCamera(TAPO_IP, ONVIF_PORT, TAPO_LOCAL_USER, TAPO_LOCAL_PASS)
     media = cam.create_media_service()
     ptz = cam.create_ptz_service()
@@ -105,16 +83,13 @@ def _onvif_action(direction: str, action: str):
     profiles = media.GetProfiles()
     token = profiles[0].token
 
-    # Xử lý lệnh dừng (khi nhả chuột)
     if action == "stop":
         ptz.Stop({'ProfileToken': token})
         return "stopped"
         
-    # Xử lý lệnh xoay liên tục (khi nhấn giữ)
     request = ptz.create_type('ContinuousMove')
     request.ProfileToken = token
     
-    # Tốc độ xoay: x và y nằm trong khoảng -1.0 đến 1.0
     speed = 0.5 
     move_map = {
         "up": {'x': 0.0, 'y': speed},
@@ -132,7 +107,7 @@ def _onvif_action(direction: str, action: str):
 
 def capture_camera():
     global latest_jpeg
-    cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG,[cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
+    cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG, [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
     
     while True:
         success, frame = cap.read()
@@ -143,7 +118,7 @@ def capture_camera():
         else:
             cap.release()
             time.sleep(2)
-            cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG,[cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
+            cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG, [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
 
 def generate_video():
     global latest_jpeg
@@ -155,9 +130,7 @@ def generate_video():
             )
         time.sleep(0.05)
 
-# ==========================================
-# 6. HELPER FUNCTIONS
-# ==========================================
+
 def get_web_admin_password():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
@@ -169,9 +142,7 @@ def set_web_admin_password(new_password):
     with open(CONFIG_FILE, "w") as f:
         json.dump({"password": new_password}, f)
 
-# ==========================================
-# 7. FASTAPI INIT & MIDDLEWARE
-# ==========================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global shared_loop
@@ -181,6 +152,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=capture_camera, daemon=True).start()
     threading.Thread(target=backend.start_mqtt_background, daemon=True).start()
     yield 
+
 
 app = FastAPI(title="SmartLock API", lifespan=lifespan)
 app.include_router(history.router)
@@ -199,9 +171,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==========================================
-# 8. API ROUTERS
-# ==========================================
+
 @app.get("/")
 def read_root():
     return {"status": "ok"}
