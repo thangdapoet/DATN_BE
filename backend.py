@@ -10,7 +10,7 @@ import numpy as np
 import cv2
 import paho.mqtt.client as mqtt
 
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
 from deepface import DeepFace
 
 from app.database import SessionLocal
@@ -328,6 +328,7 @@ def start_mqtt_background():
         logging.error(f"MQTT Connection Error: {e}")
         return
 
+    time.sleep(5)
     try:
         DeepFace.extract_faces(
             img_path=np.zeros((224, 224, 3), dtype=np.uint8), 

@@ -132,7 +132,7 @@ def _onvif_action(direction: str, action: str):
 
 def capture_camera():
     global latest_jpeg
-    cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
+    cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG,[cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
     
     while True:
         success, frame = cap.read()
@@ -143,7 +143,7 @@ def capture_camera():
         else:
             cap.release()
             time.sleep(2)
-            cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
+            cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG,[cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000])
 
 def generate_video():
     global latest_jpeg
