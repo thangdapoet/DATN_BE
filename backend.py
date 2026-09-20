@@ -1,6 +1,4 @@
-# ==========================================
-# 1. IMPORTS & CẤU HÌNH HỆ THỐNG
-# ==========================================
+
 import os
 import time
 import glob
@@ -16,9 +14,7 @@ from deepface import DeepFace
 from app.database import SessionLocal
 from app.models import History
 
-# ==========================================
-# 2. BIẾN TOÀN CỤC & ĐƯỜNG DẪN
-# ==========================================
+#cac bien toan cuc
 current_frame = None       
 send_event_callback = None 
 
@@ -40,9 +36,7 @@ for folder in [KNOWN_FACES_DIR, ACCEPTED_DIR, WARNING_DIR, TEMP_DIR]:
     
 access_history = {}
 
-# ==========================================
-# 3. CÁC HÀM XỬ LÝ DATABASE & CAMERA & AI
-# ==========================================
+#cac ham xu ly database va camera
 def clear_face_cache():
     cache_file = os.path.join(KNOWN_FACES_DIR, "representations_arcface.pkl")
     if os.path.exists(cache_file):
@@ -129,6 +123,7 @@ def verify_face_ai(captured_img_path, uid):
         if is_real and result.get("distance", 1.0) <= 0.5:
             if os.path.exists(full_captured_path):
                 os.remove(full_captured_path)
+            create_history_record(uid, "SUCCESSFUL_ACCESS", None)
             if send_event_callback:
                 send_event_callback({"status": "ok", "id": uid, "message": f"Xác thực khuôn mặt trùng khớp ({uid})"})
         else:
@@ -183,7 +178,9 @@ def identify_face_ai(captured_img_path):
  
                 if os.path.exists(full_captured_path):
                     os.remove(full_captured_path)
-                    
+
+                create_history_record(uid_found, "SUCCESSFUL_ACCESS", None)
+                
                 mqtt_client.publish(MQTT_TOPIC_CMD, "FACE_SUCCESS")
                 if send_event_callback:
                     send_event_callback({"status": "ok", "id": uid_found, "message": f"Mở cửa bằng khuôn mặt ({uid_found})"})
@@ -204,9 +201,7 @@ def identify_face_ai(captured_img_path):
         if send_event_callback:
             send_event_callback({"status": "bad", "id": "UNKNOWN", "message": "Mở cửa bằng khuôn mặt thất bại"})
 
-# ==========================================
-# 4. MQTT & BACKGROUND THREAD
-# ==========================================
+#mqtt
 def on_connect(client, userdata, flags, rc):
     client.subscribe(MQTT_TOPIC_LOG)
 

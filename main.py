@@ -6,6 +6,8 @@ import random
 import threading
 import asyncio
 import cv2
+import csv
+import io
 
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;5000000"
 
@@ -21,7 +23,8 @@ from onvif import ONVIFCamera
 
 from app.routers import history
 import backend
-
+from app.database import SessionLocal
+from app.models import History
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -290,3 +293,69 @@ async def move_camera(data: dict):
         return {"status": "success", "camera_status": onvif_res}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.get("/api/statistics")
+def get_statistics():
+    db = SessionLocal()
+    try:
+        records = db.query(History).order_by(History.CreatedDate.desc()).all()
+        
+        status_map = {
+            "SUCCESSFUL_ACCESS": "Vào thành công",
+            "FAKE_OR_STRANGER": "Mặt không khớp / Giả mạo",
+            "FACE_NOT_FOUND": "Không thấy khuôn mặt",
+            "NO_REGISTRATION_FACE": "Chưa đăng ký khuôn mặt",
+            "UNKNOWN_FACE": "Người lạ quét mặt",
+            "SPAM_WARNING": "Cảnh báo Spam thẻ",
+            "RFID_LOCKED": "Bị khóa thẻ từ",
+            "PASS_LOCKED": "Bị khóa mật khẩu",
+            "FACE_LOCKED": "Bị khóa Face ID",
+            "CLONED_WARNING": "Thẻ giả mạo",
+            "ADMIN_REGISTERED": "Đăng ký thẻ mới",
+            "WEB_REMOTE_UNLOCK": "Mở cửa qua Web",
+            "OTP_GENERATED": "Cấp mã OTP",
+            "WEB_STOPPED_ALARM": "Tắt báo động",
+            "WEB_ADMIN_DELETED": "Xóa hồ sơ qua Web",
+            "REGISTRATION_FAILED": "Đăng ký thất bại"
+        }
+        
+        data = []
+        for r in records:
+            display_status = status_map.get(r.Status, r.Status)
+            data.append({
+                "date_key": r.CreatedDate.strftime("%Y-%m-%d"), # Thêm dòng này để React lọc
+                "time": r.CreatedDate.strftime("%H:%M:%S"),     # Chỉ hiện giờ phút giây cho gọn
+                "uid": r.UID, 
+                "status": display_status,
+                "raw_status": r.Status
+            })
+            
+        return {"status": "success", "data": data}
+    finally:
+        db.close()
+
+@app.get("/api/export-logs")
+def export_logs():
+    db = SessionLocal()
+    try:
+        records = db.query(History).order_by(History.CreatedDate.desc()).all()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Ghi tiêu đề cột
+        writer.writerow(["ID", "Thời gian", "UID", "Sự kiện", "Đường dẫn ảnh"])
+        
+        for r in records:
+            writer.writerow([r.HistoryId, r.CreatedDate.strftime("%d/%m/%Y %H:%M:%S"), r.UID, r.Status, r.ImageUrl or "Không lưu ảnh"])
+        
+        output.seek(0)
+        # Mã hóa utf-8-sig (BOM) để Excel đọc chuẩn Tiếng Việt
+        encoded_output = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+        
+        return StreamingResponse(
+            encoded_output,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=Nhat_Ky_Ra_Vao.csv"}
+        )
+    finally:
+        db.close()
