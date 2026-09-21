@@ -302,7 +302,7 @@ def get_statistics():
         
         status_map = {
             "SUCCESSFUL_ACCESS": "Vào thành công",
-            "FAKE_OR_STRANGER": "Mặt không khớp / Giả mạo",
+            "FAKE_OR_STRANGER": "Khuôn mặt không khớp",
             "FACE_NOT_FOUND": "Không thấy khuôn mặt",
             "NO_REGISTRATION_FACE": "Chưa đăng ký khuôn mặt",
             "UNKNOWN_FACE": "Người lạ quét mặt",
@@ -335,27 +335,56 @@ def get_statistics():
         db.close()
 
 @app.get("/api/export-logs")
-def export_logs():
+def export_logs(date: str = None):  # <--- Bổ sung tham số date
     db = SessionLocal()
     try:
         records = db.query(History).order_by(History.CreatedDate.desc()).all()
+        
+        # --- BỔ SUNG ĐOẠN LỌC THEO NGÀY ---
+        if date:
+            records = [r for r in records if r.CreatedDate.strftime("%Y-%m-%d") == date]
+            
         output = io.StringIO()
         writer = csv.writer(output)
         
-        # Ghi tiêu đề cột
-        writer.writerow(["ID", "Thời gian", "UID", "Sự kiện", "Đường dẫn ảnh"])
+        writer.writerow(["STT", "Ngày", "Giờ", "UID", "Trạng thái sự kiện"])
         
-        for r in records:
-            writer.writerow([r.HistoryId, r.CreatedDate.strftime("%d/%m/%Y %H:%M:%S"), r.UID, r.Status, r.ImageUrl or "Không lưu ảnh"])
+        status_map = {
+            "SUCCESSFUL_ACCESS": "Vào thành công",
+            "FAKE_OR_STRANGER": "Khuôn mặt không khớp",
+            "FACE_NOT_FOUND": "Không thấy khuôn mặt",
+            "NO_REGISTRATION_FACE": "Chưa đăng ký khuôn mặt",
+            "UNKNOWN_FACE": "Người lạ quét mặt",
+            "SPAM_WARNING": "Cảnh báo Spam thẻ",
+            "RFID_LOCKED": "Bị khóa thẻ từ",
+            "PASS_LOCKED": "Bị khóa mật khẩu",
+            "FACE_LOCKED": "Bị khóa Face ID",
+            "CLONED_WARNING": "Thẻ giả mạo",
+            "ADMIN_REGISTERED": "Đăng ký thẻ mới",
+            "REGISTRATION_FAILED": "Đăng ký thất bại",
+            "WEB_REMOTE_UNLOCK": "Mở cửa qua Web",
+            "OTP_GENERATED": "Cấp mã OTP",
+            "WEB_STOPPED_ALARM": "Tắt báo động",
+            "WEB_ADMIN_DELETED": "Xóa hồ sơ qua Web"
+        }
+        
+        for idx, r in enumerate(records, start=1):
+            ngay = r.CreatedDate.strftime("%d/%m/%Y")
+            gio = r.CreatedDate.strftime("%H:%M:%S")
+            trang_thai_vn = status_map.get(r.Status, r.Status)
+            
+            writer.writerow([idx, ngay, gio, r.UID, trang_thai_vn])
         
         output.seek(0)
-        # Mã hóa utf-8-sig (BOM) để Excel đọc chuẩn Tiếng Việt
         encoded_output = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+        
+        # Thêm ngày vào tên file xuất ra (nếu có)
+        filename = f"Lich_su_truy_cap_{date}.csv" if date else "Lich_su_truy_cap.csv"
         
         return StreamingResponse(
             encoded_output,
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=Nhat_Ky_Ra_Vao.csv"}
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     finally:
         db.close()
